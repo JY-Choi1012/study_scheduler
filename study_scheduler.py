@@ -53,7 +53,7 @@ with quick_tab:
         with col_time:
             quick_time = st.time_input('시험 시간 *', value=time(9, 0), step=timedelta(minutes=10), key='quick_time')
         quick_topics = st.text_area('공부할 내용을 적어 주세요 *', placeholder='예: 전기장, 전위, 축전기', help='내용을 쉼표나 줄바꿈으로 구분해 주세요. 입력한 내용대로 계획을 만들어요.')
-        quick_hours = st.number_input('시험 전까지 공부할 수 있는 총 시간 *', min_value=0.5, max_value=200.0, value=3.0, step=0.5, format='%.1f 시간')
+        quick_hours = st.number_input('시험 전까지 공부할 수 있는 총 시간 (시간) *', min_value=0.5, max_value=200.0, value=3.0, step=0.5, format='%.1f')
         st.markdown('**조금 더 맞춤으로 만들기** · 선택 사항')
         quick_difficult = st.text_input('어려운 내용이 있나요?', placeholder='예: 전위')
         quick_important = st.text_input('교수님이 강조한 내용이 있나요?', placeholder='예: 전기장, 축전기')
