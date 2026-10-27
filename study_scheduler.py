@@ -230,3 +230,82 @@ if ranked:
 else:
     st.caption('과목과 단원을 추가하면 추천 순서가 나타나요.')
 st.info('이 순서는 입력값을 바탕으로 한 규칙 기반 추천이에요. 자동 시간표와 AI 분석은 아직 연결되지 않았어요.')
+
+st.divider()
+st.subheader('6️⃣ 자동 학습 시간표')
+st.write('등록한 고정 일정과 시험 일시를 고려해 공부할 단원을 배치해요.')
+st.caption('30분 단위로 배치하며, 현재 시각 다음의 정각 또는 30분부터 시작해요. 식사·이동·휴식과 시험 시간도 필요하면 고정 일정에 추가해 주세요.')
+
+
+def make_schedule(subjects, events, current, days):
+    """30분 단위로 일정 합집합을 피하고 시험 마감 및 선수 관계를 지킨다."""
+    from math import ceil
+
+    start = current.replace(second=0, microsecond=0)
+    start += timedelta(minutes=(-start.minute) % 30)
+    if start < current:
+        start += timedelta(minutes=30)
+    stop = current + timedelta(days=days)
+    tasks = []
+    for subject in subjects:
+        exam_at = datetime.combine(subject['date'], subject['time'])
+        if exam_at <= current:
+            continue
+        for unit in subject['units']:
+            tasks.append({'key': (subject['id'], unit['name']), 'subject': subject,
+                          'unit': unit, 'exam': exam_at,
+                          'remaining': round(float(unit['hours']) * 60)})
+    schedule = []
+    cursor = start
+    while cursor + timedelta(minutes=30) <= stop:
+        slot_end = cursor + timedelta(minutes=30)
+        if available_seconds(cursor, slot_end, events) < 30 * 60:
+            cursor = slot_end
+            continue
+        done = {t['key'] for t in tasks if t['remaining'] <= 0}
+        ready = [t for t in tasks if t['remaining'] > 0 and slot_end <= t['exam']
+                 and all((t['subject']['id'], dep) in done for dep in t['unit'].get('prerequisites', []))]
+        if ready:
+            def order_key(t):
+                hours_left = (t['exam'] - cursor).total_seconds() / 3600
+                urgency = 3 if hours_left <= 24 else 2 if hours_left <= 72 else 1
+                score = urgency * 3 + {'높음': 3, '보통': 2, '낮음': 1}[t['unit']['importance']] * 2 + {'낮음': 3, '보통': 2, '높음': 1}[t['unit']['understanding']] * 2
+                return (-score, t['exam'], t['subject']['name'], t['unit']['name'])
+            task = min(ready, key=order_key)
+            task['remaining'] -= 30
+            if schedule and schedule[-1]['key'] == task['key'] and schedule[-1]['end'] == cursor and schedule[-1]['start'].date() == cursor.date():
+                schedule[-1]['end'] = slot_end
+            else:
+                schedule.append({'key': task['key'], 'subject': task['subject']['name'], 'unit': task['unit']['name'], 'start': cursor, 'end': slot_end})
+        cursor = slot_end
+    remaining = [t for t in tasks if t['remaining'] > 0]
+    return schedule, remaining, start, stop
+
+if 'generated_schedule' not in st.session_state:
+    st.session_state.generated_schedule = None
+period = st.number_input('시간표를 만들 기간 (일)', min_value=1, max_value=60, value=7, step=1, help='현재 시각부터 선택한 일수까지 만들어요. 시험이 먼저 있으면 해당 단원은 시험 전에만 배치해요.')
+if st.button('📅 자동 시간표 만들기', type='primary'):
+    if not any(s['units'] for s in future_subjects):
+        st.warning('아직 예정된 시험의 단원이 없어요. 과목과 단원을 먼저 등록해 주세요.')
+    elif not st.session_state.fixed_events:
+        st.warning('고정 일정이 없어요. 수면·식사·이동 등도 일정에 넣은 뒤 시간표를 만들어 주세요.')
+    else:
+        st.session_state.generated_schedule = make_schedule(st.session_state.subjects, st.session_state.fixed_events, datetime.now(timezone(timedelta(hours=9))).replace(tzinfo=None), int(period))
+        st.rerun()
+
+result = st.session_state.generated_schedule
+if result is not None:
+    blocks, unscheduled, start, stop = result
+    st.caption(f'생성 범위: {start:%Y-%m-%d %H:%M}부터 {stop:%Y-%m-%d %H:%M}까지 · 한국 시간')
+    st.warning('과목이나 단원, 고정 일정을 바꿨다면 「자동 시간표 만들기」를 다시 눌러 주세요.')
+    if blocks:
+        st.table([{'날짜': b['start'].strftime('%Y-%m-%d'), '시간': f"{b['start']:%H:%M}~{b['end']:%H:%M}", '과목': b['subject'], '단원': b['unit'], '학습 시간': f"{(b['end']-b['start']).total_seconds()/3600:g}시간"} for b in blocks])
+        st.success(f"총 {sum((b['end'] - b['start']).total_seconds() for b in blocks)/3600:g}시간을 배치했어요.")
+    else:
+        st.warning('선택한 기간에 배치할 수 있는 30분짜리 시간이 없어요. 고정 일정과 기간을 확인해 주세요.')
+    if unscheduled:
+        st.warning('아래 학습량은 선택한 기간 또는 해당 시험 전까지 배치하지 못했어요.')
+        st.table([{'과목': t['subject']['name'], '단원': t['unit']['name'], '남은 학습량': f"{t['remaining']/60:g}시간", '시험 일시': t['exam'].strftime('%Y-%m-%d %H:%M')} for t in unscheduled])
+        st.caption('기간을 늘리거나 고정 일정, 예상 학습량, 선수 단원 관계를 확인해 주세요.')
+    elif blocks:
+        st.success('예정된 시험의 등록 단원을 모두 배치했어요!')
